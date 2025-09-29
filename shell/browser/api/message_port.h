@@ -83,13 +83,14 @@ class MessagePort final : public gin::Wrappable<MessagePort>,
   bool Accept(mojo::Message* mojo_message) override;
 
   std::unique_ptr<mojo::Connector> connector_;
+
   bool started_ = false;
   bool closed_ = false;
 
   v8::Global<v8::Value> pinned_;
 
   // The internal port owned by this class. The handle itself is moved into the
-  // |connector_| while entangled.
+  // pipe while entangled.
   blink::MessagePortDescriptor port_;
 
   base::WeakPtrFactory<MessagePort> weak_factory_{this};

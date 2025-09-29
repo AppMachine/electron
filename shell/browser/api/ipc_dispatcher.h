@@ -13,10 +13,12 @@
 #include "shell/browser/api/message_port.h"
 #include "shell/browser/javascript_environment.h"
 #include "shell/common/api/api.mojom.h"
+#include "shell/common/api/api_transferable_typed_array_message.mojom.h"
 #include "shell/common/gin_converters/blink_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/gin_helper/event.h"
 #include "shell/common/gin_helper/reply_channel.h"
+#include "shell/common/transferable_typed_array_v8_serializer.h"
 #include "shell/common/v8_util.h"
 
 namespace electron {
@@ -43,15 +45,19 @@ class IpcDispatcher {
 
   void ReceivePostMessage(gin::Handle<gin_helper::internal::Event>& event,
                           const std::string& channel,
-                          blink::TransferableMessage message) {
+                          electron::mojom::TransferableTypedArrayMessage&& message) {
     TRACE_EVENT1("electron", "IpcDispatcher::ReceivePostMessage", "channel",
                  channel);
     v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
     v8::HandleScope handle_scope(isolate);
-    auto wrapped_ports =
-        MessagePort::EntanglePorts(isolate, std::move(message.ports));
+    // Convert MessagePortDescriptors to MessagePortChannels
+    std::vector<blink::MessagePortChannel> channels;
+    for (auto& port : message.ports) {
+      channels.push_back(blink::MessagePortChannel(std::move(port)));
+    }
+    auto wrapped_ports = MessagePort::EntanglePorts(isolate, std::move(channels));
     v8::Local<v8::Value> message_value =
-        electron::DeserializeV8Value(isolate, message);
+        electron::DeserializeV8ValueWithTransfer(isolate, message);
     emitter()->EmitWithoutEvent("-ipc-ports", event, channel, message_value,
                                 std::move(wrapped_ports));
   }

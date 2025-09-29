@@ -11,6 +11,7 @@ const isHiddenPage = mainFrame.getWebPreference('hiddenPage');
 const isWebView = mainFrame.getWebPreference('isWebView');
 
 require('@electron/internal/renderer/ipc-native-setup');
+require('@electron/internal/renderer/fast-ipc-native-setup');
 
 switch (window.location.protocol) {
   case 'devtools:': {

@@ -1,0 +1,22 @@
+// Copyright (c) 2024 Electron contributors.
+// Use of this source code is governed by the MIT license that can be
+// found in the LICENSE file.
+
+module electron.mojom;
+
+import "mojo/public/mojom/base/big_buffer.mojom";
+import "third_party/blink/public/mojom/messaging/cloneable_message.mojom";
+
+// Extends CloneableMessage to optimize typed array transfers by storing
+// them in a single contiguous memory block.
+struct TypedArrayCloneableMessage {
+  // V8 serialized data with typed array metadata (type, offset, length)
+  blink.mojom.CloneableMessage base_message;
+
+  // All typed array data in a single block.
+  // Uses BigBuffer for ≤64KB, shared memory for >64KB.
+  mojo_base.mojom.BigBuffer? typed_arrays_data;
+  handle<shared_buffer>? typed_arrays_shared_memory;
+
+  uint64 typed_arrays_size;
+};

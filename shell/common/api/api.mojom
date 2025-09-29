@@ -3,7 +3,7 @@ module electron.mojom;
 import "mojo/public/mojom/base/string16.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
 import "third_party/blink/public/mojom/messaging/cloneable_message.mojom";
-import "third_party/blink/public/mojom/messaging/transferable_message.mojom";
+import "electron/shell/common/api/api_transferable_typed_array_message.mojom";
 
 interface ElectronRenderer {
   Message(
@@ -11,7 +11,7 @@ interface ElectronRenderer {
       string channel,
       blink.mojom.CloneableMessage arguments);
 
-  ReceivePostMessage(string channel, blink.mojom.TransferableMessage message);
+  ReceivePostMessage(string channel, TransferableTypedArrayMessage message);
 
   TakeHeapSnapshot(handle file) => (bool success);
 };
@@ -40,7 +40,7 @@ interface ElectronApiIPC {
       string channel,
       blink.mojom.CloneableMessage arguments) => (blink.mojom.CloneableMessage result);
 
-  ReceivePostMessage(string channel, blink.mojom.TransferableMessage message);
+  ReceivePostMessage(string channel, TransferableTypedArrayMessage message);
 
   // Emits an event on |channel| from the ipcMain JavaScript object in the main
   // process, and waits synchronously for a response.

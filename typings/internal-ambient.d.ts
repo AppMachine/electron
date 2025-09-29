@@ -36,6 +36,19 @@ declare namespace NodeJS {
     createForServiceWorker(): IpcRendererImpl;
   }
 
+  interface FastIpcRendererImpl {
+    send(internal: boolean, channel: string, args: any[]): void;
+    sendSync(internal: boolean, channel: string, args: any[]): any;
+    sendToHost(channel: string, args: any[]): void;
+    invoke<T>(internal: boolean, channel: string, args: any[]): Promise<{ error: string, result: T }>;
+    postMessage(channel: string, message: any, transferables: MessagePort[]): void;
+  }
+
+  interface FastIpcRendererBinding {
+    createForRenderFrame(): FastIpcRendererImpl;
+    createForServiceWorker(): FastIpcRendererImpl;
+  }
+
   interface V8UtilBinding {
     getHiddenValue<T>(obj: any, key: string): T;
     setHiddenValue<T>(obj: any, key: string, value: T): void;
@@ -151,6 +164,7 @@ declare namespace NodeJS {
     getWebPreference<K extends keyof InternalWebPreferences>(name: K): InternalWebPreferences[K];
     getWebFrameId(window: Window): number;
     allowGuestViewElementDefinition(context: object, callback: Function): void;
+    exposeFastIpcRenderer(fastIpcRenderer: any): void;
   }
 
   interface WebFrameBinding {

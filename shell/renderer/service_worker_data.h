@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "electron/shell/common/api/api.mojom.h"
+#include "electron/shell/common/api/api_transferable_typed_array_message.mojom.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -43,7 +44,7 @@ class ServiceWorkerData : public mojom::ElectronRenderer {
                const std::string& channel,
                blink::CloneableMessage arguments) override;
   void ReceivePostMessage(const std::string& channel,
-                          blink::TransferableMessage message) override;
+                          electron::mojom::TransferableTypedArrayMessagePtr message) override;
   void TakeHeapSnapshot(mojo::ScopedHandle file,
                         TakeHeapSnapshotCallback callback) override;
 

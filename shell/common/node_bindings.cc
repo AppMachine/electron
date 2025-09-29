@@ -58,6 +58,7 @@
   V(electron_browser_crash_reporter)      \
   V(electron_browser_desktop_capturer)    \
   V(electron_browser_dialog)              \
+  V(electron_browser_fast_ipc)            \
   V(electron_browser_event_emitter)       \
   V(electron_browser_global_shortcut)     \
   V(electron_browser_image_view)          \
@@ -102,6 +103,7 @@
   V(electron_renderer_web_utils)      \
   V(electron_renderer_context_bridge) \
   V(electron_renderer_crash_reporter) \
+  V(electron_renderer_fast_ipc)       \
   V(electron_renderer_ipc)            \
   V(electron_renderer_web_frame)
 

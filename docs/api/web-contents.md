@@ -2066,6 +2066,21 @@ ipcMain.on('ping', (event) => {
 })
 ```
 
+#### `contents.sendFastIpcToFrame(frameId, channel, ...args)`
+
+* `frameId` Integer | \[number, number] - the ID of the frame to send to, or a
+  pair of `[processId, frameId]` if the frame is in a different process to the
+  main frame.
+* `channel` string
+* `...args` any[]
+
+Send a high-performance asynchronous message to a specific frame in a renderer process via
+`channel`, along with arguments. This method uses optimized native bindings for better
+performance compared to the standard `sendToFrame` method.
+
+The renderer process can handle the message by listening to `channel` with the
+[`fastIpcRenderer`](fast-ipc-renderer.md) module.
+
 #### `contents.postMessage(channel, message, [transfer])`
 
 * `channel` string
@@ -2365,6 +2380,25 @@ In that case, handlers should check the `senderFrame` property of the IPC event
 to ensure that the message is coming from the expected frame. Alternatively,
 register handlers on the appropriate frame directly using the
 [`WebFrameMain.ipc`](web-frame-main.md#frameipc-readonly) interface.
+
+#### `contents.fastIpc` _Readonly_
+
+A [`FastIpcMain`](fast-ipc-main.md) scoped to just high-performance IPC messages sent from this
+WebContents.
+
+High-performance IPC messages sent with `fastIpcRenderer.send`, `fastIpcRenderer.sendSync` or
+`fastIpcRenderer.postMessage` will be delivered in the following order:
+
+1. `contents.mainFrame.fastIpc.on(channel)`
+2. `contents.fastIpc.on(channel)`
+3. `fastIpcMain.on(channel)`
+
+Handlers registered with `invoke` will be checked in the following order. The
+first one that is defined will be called, the rest will be ignored.
+
+1. `contents.mainFrame.fastIpc.handle(channel)`
+2. `contents.fastIpc.handle(channel)`
+3. `fastIpcMain.handle(channel)`
 
 #### `contents.audioMuted`
 

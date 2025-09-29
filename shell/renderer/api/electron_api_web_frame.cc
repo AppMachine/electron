@@ -355,6 +355,7 @@ class WebFrameRenderer final : public gin::Wrappable<WebFrameRenderer>,
         .SetMethod("setZoomFactor", &WebFrameRenderer::SetZoomFactor)
         .SetMethod("getZoomFactor", &WebFrameRenderer::GetZoomFactor)
         .SetMethod("getWebPreference", &WebFrameRenderer::GetWebPreference)
+        .SetMethod("exposeFastIpcRenderer", &WebFrameRenderer::ExposeFastIpcRenderer)
 #if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
         .SetMethod("isWordMisspelled", &WebFrameRenderer::IsWordMisspelled)
         .SetMethod("getWordSuggestions", &WebFrameRenderer::GetWordSuggestions)
@@ -485,6 +486,22 @@ class WebFrameRenderer final : public gin::Wrappable<WebFrameRenderer>,
   double GetZoomFactor(v8::Isolate* isolate) {
     double zoom_level = GetZoomLevel(isolate);
     return blink::ZoomLevelToZoomFactor(zoom_level);
+  }
+
+  void ExposeFastIpcRenderer(v8::Isolate* isolate, v8::Local<v8::Value> fast_ipc_renderer) {
+    content::RenderFrame* render_frame;
+    if (!MaybeGetRenderFrame(isolate, "exposeFastIpcRenderer", &render_frame))
+      return;
+
+    auto* web_frame = render_frame->GetWebFrame();
+    if (!web_frame)
+      return;
+
+    v8::Local<v8::Context> main_context = web_frame->MainWorldScriptContext();
+    v8::Context::Scope context_scope(main_context);
+
+    v8::Local<v8::Object> global = main_context->Global();
+    global->Set(main_context, gin::StringToV8(isolate, "fastIpcRenderer"), fast_ipc_renderer).Check();
   }
 
   v8::Local<v8::Value> GetWebPreference(v8::Isolate* isolate,

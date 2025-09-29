@@ -13,7 +13,9 @@
 #include "shell/browser/api/electron_api_session.h"
 #include "shell/browser/electron_browser_context.h"
 #include "shell/browser/javascript_environment.h"
+#include "shell/common/api/api_transferable_typed_array_message.mojom.h"
 #include "shell/common/gin_helper/dictionary.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom.h"
 
 namespace electron {
 
@@ -94,14 +96,14 @@ void ElectronApiSWIPCHandlerImpl::Invoke(bool internal,
 
 void ElectronApiSWIPCHandlerImpl::ReceivePostMessage(
     const std::string& channel,
-    blink::TransferableMessage message) {
+    electron::mojom::TransferableTypedArrayMessagePtr message) {
   auto* session = GetSession();
   v8::Isolate* isolate = electron::JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
   auto event = MakeIPCEvent(isolate, session, false);
   if (event.IsEmpty())
     return;
-  session->ReceivePostMessage(event, channel, std::move(message));
+  session->ReceivePostMessage(event, channel, std::move(*message));
 }
 
 void ElectronApiSWIPCHandlerImpl::MessageSync(bool internal,

@@ -147,6 +147,14 @@ WebContents.prototype.sendToFrame = function (frameId, channel, ...args) {
   return true;
 };
 
+// Direct Transfer version of sendToFrame
+WebContents.prototype.sendFastIpcToFrame = function (frameId: [number, number], channel: string, ...args: any[]) {
+  const frame = getWebFrame(this, frameId);
+  if (!frame) return false;
+  frame.sendFastIpc(channel, ...args);
+  return true;
+};
+
 // Following methods are mapped to webFrame.
 const webFrameMethods = [
   'insertCSS',
@@ -555,6 +563,13 @@ WebContents.prototype._init = function () {
     enumerable: true
   });
 
+  const { FastIpcMainImpl } = require('@electron/internal/browser/fast-ipc-main-impl');
+  const fastIpc = new FastIpcMainImpl();
+  Object.defineProperty(this, 'fastIpc', {
+    get () { return fastIpc; },
+    enumerable: true
+  });
+
   // Add navigationHistory property which handles session history,
   // maintaining a list of navigation entries for backward and forward navigation.
   Object.defineProperty(this, 'navigationHistory', {
@@ -883,6 +898,8 @@ export function create (options = {}): Electron.WebContents {
 }
 
 export function fromId (id: string) {
+  console.log('binding', binding);
+  console.log('fromId', id);
   return binding.fromId(id);
 }
 
