@@ -1,7 +1,12 @@
 import("//mojo/public/tools/bindings/mojom.gni")
 
 mojom("mojo") {
-  sources = [ "api/api.mojom" ]
+  sources = [
+    "api/api.mojom",
+    "api/api_fast_ipc.mojom",
+    "api/api_transferable_typed_array_message.mojom",
+    "api/api_typed_array_cloneable_message.mojom",
+  ]
 
   public_deps = [
     "//mojo/public/mojom/base",

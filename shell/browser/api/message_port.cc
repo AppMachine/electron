@@ -4,6 +4,7 @@
 
 #include "shell/browser/api/message_port.h"
 
+#include <iostream>
 #include <string>
 #include <utility>
 
@@ -19,11 +20,15 @@
 #include "shell/common/gin_helper/event_emitter_caller.h"
 #include "shell/common/gin_helper/wrappable.h"
 #include "shell/common/node_includes.h"
-#include "shell/common/v8_util.h"
+#include "shell/common/transferable_typed_array_v8_serializer.h"
+#include "shell/common/api/api_transferable_typed_array_message.mojom.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
+#include "third_party/blink/public/common/messaging/cloneable_message_mojom_traits.h"
+#include "third_party/blink/public/common/messaging/task_attribution_id_mojom_traits.h"
 #include "third_party/blink/public/common/messaging/transferable_message.h"
 #include "third_party/blink/public/common/messaging/transferable_message_mojom_traits.h"
-#include "third_party/blink/public/mojom/messaging/transferable_message.mojom.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom.h"
+#include "third_party/blink/public/mojom/blob/serialized_blob.mojom.h"
 
 namespace electron {
 
@@ -56,62 +61,67 @@ void MessagePort::PostMessage(gin::Arguments* args) {
     return;
   DCHECK(!IsNeutered());
 
-  blink::TransferableMessage transferable_message;
   gin_helper::ErrorThrower thrower(args->isolate());
 
-  // |message| is any value that can be serialized to StructuredClone.
+  // Get message value and transfer list
   v8::Local<v8::Value> message_value;
-  if (args->GetNext(&message_value)) {
-    if (!electron::SerializeV8Value(args->isolate(), message_value,
-                                    &transferable_message)) {
-      // SerializeV8Value sets an exception.
-      return;
-    }
+  v8::Local<v8::Value> transfer_list;
+
+  if (!args->GetNext(&message_value)) {
+    message_value = v8::Undefined(args->isolate());
   }
 
-  v8::Local<v8::Value> transferables;
-  std::vector<gin::Handle<MessagePort>> wrapped_ports;
-  if (args->GetNext(&transferables)) {
-    std::vector<v8::Local<v8::Value>> wrapped_port_values;
-    if (!gin::ConvertFromV8(args->isolate(), transferables,
-                            &wrapped_port_values)) {
-      thrower.ThrowTypeError("transferables must be an array of MessagePorts");
-      return;
-    }
+  if (!args->GetNext(&transfer_list)) {
+    transfer_list = v8::Undefined(args->isolate());
+  }
 
-    for (unsigned i = 0; i < wrapped_port_values.size(); ++i) {
-      if (!gin_helper::IsValidWrappable(wrapped_port_values[i],
-                                        &MessagePort::kWrapperInfo)) {
-        thrower.ThrowTypeError("Port at index " + base::NumberToString(i) +
-                               " is not a valid port");
-        return;
+  // Validate transfer list doesn't contain this port
+  if (!transfer_list.IsEmpty() && !transfer_list->IsUndefined() && transfer_list->IsArray()) {
+    v8::Local<v8::Array> transfer_array = transfer_list.As<v8::Array>();
+    uint32_t length = transfer_array->Length();
+
+    for (uint32_t i = 0; i < length; ++i) {
+      v8::Local<v8::Value> element;
+      if (transfer_array->Get(args->isolate()->GetCurrentContext(), i).ToLocal(&element)) {
+        gin::Handle<MessagePort> port;
+        if (gin::ConvertFromV8(args->isolate(), element, &port)) {
+          if (port.get() == this) {
+            thrower.ThrowError("Port at index " + base::NumberToString(i) +
+                             " contains the source port.");
+            return;
+          }
+        }
       }
     }
-
-    if (!gin::ConvertFromV8(args->isolate(), transferables, &wrapped_ports)) {
-      thrower.ThrowTypeError("Passed an invalid MessagePort");
-      return;
-    }
   }
 
-  // Make sure we aren't connected to any of the passed-in ports.
-  for (unsigned i = 0; i < wrapped_ports.size(); ++i) {
-    if (wrapped_ports[i].get() == this) {
-      thrower.ThrowError("Port at index " + base::NumberToString(i) +
-                         " contains the source port.");
-      return;
-    }
-  }
+  // Keep a weak pointer for async operation
+  auto weak_this = weak_factory_.GetWeakPtr();
 
-  bool threw_exception = false;
-  transferable_message.ports = MessagePort::DisentanglePorts(
-      args->isolate(), wrapped_ports, &threw_exception);
-  if (threw_exception)
-    return;
+  std::cout << "[MessagePort::PostMessage] Starting async serialization with shared memory" << std::endl;
 
-  mojo::Message mojo_message = blink::mojom::TransferableMessage::WrapAsMessage(
-      std::move(transferable_message));
-  connector_->Accept(&mojo_message);
+  // Use async serializer with shared memory optimization
+  electron::SerializeV8ValueWithTransferAsync(
+      args->isolate(), message_value, transfer_list,
+      base::BindOnce(
+          [](base::WeakPtr<MessagePort> weak_port,
+             electron::mojom::TransferableTypedArrayMessagePtr electron_message) {
+            if (!weak_port || !weak_port->IsEntangled()) {
+              std::cout << "[MessagePort::PostMessage] Port no longer valid after async serialization" << std::endl;
+              return;
+            }
+
+            std::cout << "[MessagePort::PostMessage] Async serialization complete" << std::endl;
+            std::cout << "[MessagePort::PostMessage] Message has " << electron_message->ports.size() << " ports" << std::endl;
+
+            // Send our message with shared memory optimization
+            std::cout << "[MessagePort::PostMessage] Sending Electron message with shared memory" << std::endl;
+            mojo::Message mojo_message = electron::mojom::TransferableTypedArrayMessage::WrapAsMessage(
+                std::move(electron_message));
+            weak_port->connector_->Accept(&mojo_message);
+            std::cout << "[MessagePort::PostMessage] Message sent" << std::endl;
+          },
+          weak_this));
 }
 
 void MessagePort::Start() {
@@ -250,28 +260,66 @@ void MessagePort::Unpin() {
 }
 
 bool MessagePort::Accept(mojo::Message* mojo_message) {
-  blink::TransferableMessage message;
-  if (!blink::mojom::TransferableMessage::DeserializeFromMessage(
+  std::cout << "[MessagePort::Accept] Received message" << std::endl;
+  std::cout << "[MessagePort::Accept] Message size: " << mojo_message->payload_num_bytes() << std::endl;
+  std::cout << "[MessagePort::Accept] Message name (method): " << mojo_message->name() << std::endl;
+
+  // Deserialize our Electron message with shared memory
+  electron::mojom::TransferableTypedArrayMessagePtr message;
+  if (!electron::mojom::TransferableTypedArrayMessage::DeserializeFromMessage(
           std::move(*mojo_message), &message)) {
+    std::cout << "[MessagePort::Accept] Failed to deserialize Electron message - likely sent as blink format" << std::endl;
+    // The validation error suggests this is a blink message
+    // This could happen if a port created by us is transferred to blink code
+    // and blink sends a message back
     return false;
   }
+  std::cout << "[MessagePort::Accept] Message deserialized as Electron format successfully" << std::endl;
 
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope scope(isolate);
 
-  auto ports = EntanglePorts(isolate, std::move(message.ports));
+  // Convert MessagePortDescriptors to MessagePortChannels and entangle
+  std::vector<blink::MessagePortChannel> channels;
+  for (auto& port : message->ports) {
+    channels.push_back(blink::MessagePortChannel(std::move(port)));
+  }
+  auto ports = EntanglePorts(isolate, std::move(channels));
 
-  v8::Local<v8::Value> message_value = DeserializeV8Value(isolate, message);
+  // Keep a weak reference for async deserialization
+  auto weak_this = weak_factory_.GetWeakPtr();
 
-  v8::Local<v8::Object> self;
-  if (!GetWrapper(isolate).ToLocal(&self))
-    return false;
+  // Use async deserializer with background typed array processing
+  std::cout << "[MessagePort::Accept] Starting async deserialization with shared memory" << std::endl;
+  DeserializeV8ValueWithTransferAsync(
+      isolate, *message,
+      base::BindOnce(
+          [](base::WeakPtr<MessagePort> weak_port,
+             std::vector<gin::Handle<MessagePort>> ports,
+             v8::Global<v8::Context> context,
+             v8::Local<v8::Value> message_value) {
+            if (!weak_port)
+              return;
 
-  auto event = gin::DataObjectBuilder(isolate)
-                   .Set("data", message_value)
-                   .Set("ports", ports)
-                   .Build();
-  gin_helper::EmitEvent(isolate, self, "message", event);
+            v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+            v8::HandleScope scope(isolate);
+            v8::Context::Scope context_scope(context.Get(isolate));
+
+            std::cout << "[MessagePort::Accept] Async deserialization complete" << std::endl;
+
+            v8::Local<v8::Object> self;
+            if (!weak_port->GetWrapper(isolate).ToLocal(&self))
+              return;
+
+            auto event = gin::DataObjectBuilder(isolate)
+                             .Set("data", message_value)
+                             .Set("ports", ports)
+                             .Build();
+            gin_helper::EmitEvent(isolate, self, "message", event);
+          },
+          weak_this, std::move(ports),
+          v8::Global<v8::Context>(isolate, isolate->GetCurrentContext())));
+
   return true;
 }
 

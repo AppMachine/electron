@@ -13,6 +13,8 @@
 #include "gin/wrappable.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "shell/common/api/api.mojom.h"
+#include "shell/common/api/api_transferable_typed_array_message.mojom.h"
+#include "shell/common/transferable_typed_array_v8_serializer.h"
 #include "shell/common/gin_converters/blink_converter.h"
 #include "shell/common/gin_converters/value_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
@@ -114,36 +116,25 @@ class IPCBase : public gin::Wrappable<T> {
       thrower.ThrowError(kIPCMethodCalledAfterContextReleasedError);
       return;
     }
-    blink::TransferableMessage transferable_message;
-    if (!electron::SerializeV8Value(isolate, message_value,
-                                    &transferable_message)) {
-      // SerializeV8Value sets an exception.
-      return;
-    }
 
-    std::vector<v8::Local<v8::Object>> transferables;
-    if (transfer && !transfer.value()->IsUndefined()) {
-      if (!gin::ConvertFromV8(isolate, *transfer, &transferables)) {
-        thrower.ThrowTypeError("Invalid value for transfer");
-        return;
-      }
-    }
+    // Use transfer list or empty array
+    v8::Local<v8::Value> transfer_list =
+        (transfer && !transfer.value()->IsUndefined())
+        ? transfer.value()
+        : v8::Array::New(isolate, 0);
 
-    std::vector<blink::MessagePortChannel> ports;
-    for (auto& transferable : transferables) {
-      std::optional<blink::MessagePortChannel> port =
-          blink::WebMessagePortConverter::
-              DisentangleAndExtractMessagePortChannel(isolate, transferable);
-      if (!port.has_value()) {
-        thrower.ThrowTypeError("Invalid value for transfer");
-        return;
-      }
-      ports.emplace_back(port.value());
-    }
-
-    transferable_message.ports = std::move(ports);
-    electron_ipc_remote_->ReceivePostMessage(channel,
-                                             std::move(transferable_message));
+    // Use async serialization with transfer support
+    electron::SerializeV8ValueWithTransferAsync(
+        isolate, message_value, transfer_list,
+        base::BindOnce(
+            [](mojo::AssociatedRemote<electron::mojom::ElectronApiIPC>* remote,
+               std::string channel,
+               electron::mojom::TransferableTypedArrayMessagePtr message) {
+              if (*remote) {
+                (*remote)->ReceivePostMessage(channel, std::move(message));
+              }
+            },
+            &electron_ipc_remote_, channel));
   }
 
   void SendToHost(v8::Isolate* isolate,

@@ -3,7 +3,11 @@
 // found in the LICENSE file.
 
 #include "shell/browser/api/electron_api_web_frame_main.h"
+#include "shell/common/api/api_transferable_typed_array_message.mojom.h"
+#include "shell/common/transferable_typed_array_v8_serializer.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom.h"
 
+#include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,6 +16,7 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "base/time/time.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"  // nogncheck
 #include "content/browser/renderer_host/render_process_host_impl.h"  // nogncheck
 #include "content/public/browser/frame_tree_node_id.h"
@@ -24,6 +29,8 @@
 #include "shell/browser/browser.h"
 #include "shell/browser/javascript_environment.h"
 #include "shell/common/api/api.mojom.h"
+#include "shell/common/api/api_fast_ipc.mojom.h"
+#include "shell/common/typed_array_v8_serializer.h"
 #include "shell/common/gin_converters/blink_converter.h"
 #include "shell/common/gin_converters/frame_converter.h"
 #include "shell/common/gin_converters/gurl_converter.h"
@@ -286,6 +293,85 @@ void WebFrameMain::Send(v8::Isolate* isolate,
   GetRendererApi()->Message(internal, channel, std::move(message));
 }
 
+void WebFrameMain::SendFastIpc(v8::Isolate* isolate,
+                                      bool internal,
+                                      const std::string& channel,
+                                      v8::Local<v8::Value> args) {
+  base::TimeTicks send_start = base::TimeTicks::Now();
+
+  if (!CheckRenderFrame())
+    return;
+
+  // Get frame info for logging and processing
+  content::RenderFrameHost* rfh = render_frame_host();
+  if (!rfh) {
+    std::cout << "[WebFrameMain] No render frame host for FastIPC" << std::endl;
+    return;
+  }
+
+  // Get Direct Transfer API (will set up connection if needed)
+  auto& fast_ipc_api = GetFastIpcApi();
+
+  // Check if the connection is bound
+  if (!fast_ipc_api.is_bound()) {
+    std::cout << "[WebFrameMain] FastIPC not bound, skipping send" << std::endl;
+    return;
+  }
+
+  // Use TypedArrayV8Serializer for async processing
+  v8::Local<v8::Value> transfer_list = v8::Array::New(isolate, 0);
+  electron::SerializeV8ValueWithTypedArraysAsync(
+      isolate, args, transfer_list,
+      base::BindOnce(
+          [](base::WeakPtr<WebFrameMain> self,
+             bool internal,
+             std::string channel,
+             base::TimeTicks send_start,
+             electron::mojom::TypedArrayCloneableMessagePtr typed_msg) {
+            if (!self) {
+              LOG(ERROR) << "[WebFrameMain] WebFrameMain destroyed during serialization";
+              return;
+            }
+
+            if (!typed_msg) {
+              LOG(ERROR) << "[WebFrameMain] Serialization failed";
+              return;
+            }
+
+            if (typed_msg->base_message.encoded_message.size() == 0) {
+              LOG(ERROR) << "[WebFrameMain] Empty buffer after serialization";
+              return;
+            }
+
+            // Check if connection is still valid
+            auto& fast_ipc_api = self->GetFastIpcApi();
+            if (!fast_ipc_api.is_bound()) {
+              std::cout << "[WebFrameMain] FastIPC disconnected during serialization" << std::endl;
+              return;
+            }
+
+            base::TimeTicks mojo_send_start = base::TimeTicks::Now();
+
+            // Capture size before move
+            size_t data_size = typed_msg->base_message.encoded_message.size();
+
+            // Send via Mojo from main thread (sender_id is 0 for main process)
+            fast_ipc_api->ReceiveFastIpcMessage(
+                internal, channel, std::move(typed_msg),
+                0);  // sender_id
+
+            base::TimeDelta mojo_send_time = base::TimeTicks::Now() - mojo_send_start;
+            base::TimeDelta total_send_time = base::TimeTicks::Now() - send_start;
+            if (data_size > 100 * 1024 * 1024) { // Log for large data > 100MB
+              std::cout << "[WebFrameMain] SendFastIpc complete timings:" << std::endl;
+              std::cout << "  - Mojo send time: " << mojo_send_time.InMillisecondsF() << "ms" << std::endl;
+              std::cout << "  - Total SendFastIpc time: " << total_send_time.InMillisecondsF() << "ms" << std::endl;
+              std::cout << "  - Data size: " << (data_size / (1024.0 * 1024.0)) << "MB" << std::endl;
+            }
+          },
+          weak_factory_.GetWeakPtr(), internal, channel, send_start));
+}
+
 const mojo::Remote<mojom::ElectronRenderer>& WebFrameMain::GetRendererApi() {
   MaybeSetupMojoConnection();
   return renderer_api_;
@@ -318,10 +404,61 @@ void WebFrameMain::MaybeSetupMojoConnection() {
 void WebFrameMain::TeardownMojoConnection() {
   renderer_api_.reset();
   pending_receiver_.reset();
+  renderer_fast_ipc_api_.reset();
+  pending_fast_ipc_receiver_.reset();
 }
 
 void WebFrameMain::OnRendererConnectionError() {
+  std::cout << "[WebFrameMain] FastIPC renderer connection error - tearing down connection" << std::endl;
   TeardownMojoConnection();
+}
+
+const mojo::Remote<mojom::ElectronFastIpcRenderer>& WebFrameMain::GetFastIpcApi() {
+  MaybeSetupFastIpcConnection();
+  return renderer_fast_ipc_api_;
+}
+
+void WebFrameMain::MaybeSetupFastIpcConnection() {
+  if (render_frame_disposed_) {
+    std::cout << "[WebFrameMain] Cannot setup FastIPC: render frame disposed" << std::endl;
+    return;
+  }
+
+  content::RenderFrameHost* rfh = render_frame_host();
+  if (!rfh) {
+    std::cout << "[WebFrameMain] Cannot setup FastIPC: no render frame host" << std::endl;
+    return;
+  }
+
+  int process_id = rfh->GetProcess()->GetID().GetUnsafeValue();
+  int frame_id = rfh->GetRoutingID();
+
+  if (!renderer_fast_ipc_api_) {
+    std::cout << "[WebFrameMain] Creating new FastIPC connection for frame ["
+              << process_id << ", " << frame_id << "]" << std::endl;
+    pending_fast_ipc_receiver_ = renderer_fast_ipc_api_.BindNewPipeAndPassReceiver();
+    // Set disconnect handler to properly clean up when renderer disconnects
+    renderer_fast_ipc_api_.set_disconnect_handler(base::BindOnce(
+        &WebFrameMain::OnRendererConnectionError, weak_factory_.GetWeakPtr()));
+    std::cout << "[WebFrameMain] FastIPC pipe created, pending_receiver ready" << std::endl;
+  }
+
+  // Wait for RenderFrame to be created in renderer before accessing remote.
+  // This mirrors IPC's exact behavior
+  if (pending_fast_ipc_receiver_ && rfh->IsRenderFrameLive()) {
+    std::cout << "[WebFrameMain] Sending FastIPC receiver to renderer for frame ["
+              << process_id << ", " << frame_id << "]" << std::endl;
+    rfh->GetRemoteInterfaces()->GetInterface(std::move(pending_fast_ipc_receiver_));
+    std::cout << "[WebFrameMain] FastIPC receiver sent successfully" << std::endl;
+  } else {
+    if (pending_fast_ipc_receiver_) {
+      std::cout << "[WebFrameMain] Have pending receiver but frame not live yet" << std::endl;
+    }
+    if (!rfh->IsRenderFrameLive()) {
+      std::cout << "[WebFrameMain] Frame not live for ["
+                << process_id << ", " << frame_id << "]" << std::endl;
+    }
+  }
 }
 
 [[nodiscard]] bool WebFrameMain::HasRenderFrame() const {
@@ -339,27 +476,14 @@ void WebFrameMain::PostMessage(v8::Isolate* isolate,
                                const std::string& channel,
                                v8::Local<v8::Value> message_value,
                                std::optional<v8::Local<v8::Value>> transfer) {
-  blink::TransferableMessage transferable_message;
-  if (!electron::SerializeV8Value(isolate, message_value,
-                                  &transferable_message)) {
-    // SerializeV8Value sets an exception.
+  // Use our new serializer with shared memory support
+  auto transferable_message = electron::mojom::TransferableTypedArrayMessage::New();
+  v8::Local<v8::Value> transfer_value = transfer ? *transfer : v8::Undefined(isolate);
+  if (!electron::SerializeV8ValueWithTransfer(isolate, message_value, transfer_value,
+                                              transferable_message.get())) {
+    // Serializer sets an exception.
     return;
   }
-
-  std::vector<gin::Handle<MessagePort>> wrapped_ports;
-  if (transfer && !transfer.value()->IsUndefined()) {
-    if (!gin::ConvertFromV8(isolate, *transfer, &wrapped_ports)) {
-      isolate->ThrowException(v8::Exception::Error(
-          gin::StringToV8(isolate, "Invalid value for transfer")));
-      return;
-    }
-  }
-
-  bool threw_exception = false;
-  transferable_message.ports =
-      MessagePort::DisentanglePorts(isolate, wrapped_ports, &threw_exception);
-  if (threw_exception)
-    return;
 
   if (!CheckRenderFrame())
     return;
@@ -587,6 +711,7 @@ void WebFrameMain::FillObjectTemplate(v8::Isolate* isolate,
       .SetMethod("reload", &WebFrameMain::Reload)
       .SetMethod("isDestroyed", &WebFrameMain::IsDestroyed)
       .SetMethod("_send", &WebFrameMain::Send)
+      .SetMethod("_sendFastIpc", &WebFrameMain::SendFastIpc)
       .SetMethod("_postMessage", &WebFrameMain::PostMessage)
       .SetProperty("detached", &WebFrameMain::Detached)
       .SetProperty("frameTreeNodeId", &WebFrameMain::FrameTreeNodeID)

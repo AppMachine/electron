@@ -1,10 +1,17 @@
 import { IPC_MESSAGES } from '@electron/internal/common/ipc-messages';
 import { internalContextBridge } from '@electron/internal/renderer/api/context-bridge';
+import fastIpcRenderer from '@electron/internal/renderer/api/fast-ipc-renderer';
 import { ipcRendererInternal } from '@electron/internal/renderer/ipc-renderer-internal';
 
 const { contextIsolationEnabled } = internalContextBridge;
+const { mainFrame } = process._linkedBinding('electron_renderer_web_frame');
 
 export const windowSetup = (isWebView: boolean, isHiddenPage: boolean) => {
+  // Expose fastIpcRenderer directly to main world
+  if (!isWebView) {
+    mainFrame.exposeFastIpcRenderer(fastIpcRenderer);
+  }
+
   if (!process.sandboxed && !isWebView) {
     // Override default window.close.
     window.close = function () {

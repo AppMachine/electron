@@ -1,0 +1,62 @@
+// Copyright (c) 2024 The Electron Authors. All rights reserved.
+// Use of this source code is governed by the MIT license that can be
+// found in the LICENSE file.
+
+module electron.mojom;
+
+import "mojo/public/mojom/base/values.mojom";
+import "mojo/public/mojom/base/big_buffer.mojom";
+import "mojo/public/mojom/base/shared_memory.mojom";
+import "electron/shell/common/api/api_typed_array_cloneable_message.mojom";
+import "electron/shell/common/api/api_transferable_typed_array_message.mojom";
+
+// FastIpc is an optimized IPC mechanism for transferring large amounts
+// of data between processes using shared memory and zero-copy techniques.
+interface ElectronApiFastIPC {
+  // Send a direct transfer message with serialized data
+  // BigBuffer automatically uses inline bytes for <64KB, shared memory for larger
+  SendFastIpcMessage(
+      bool internal,
+      string channel,
+      TypedArrayCloneableMessage message,
+      int32 sender_id) => ();
+
+  // Invoke a direct transfer with response
+  FastIpcInvoke(
+      bool internal,
+      string channel,
+      TypedArrayCloneableMessage message,
+      int32 sender_id) => (
+      TypedArrayCloneableMessage response);
+
+  // Send a synchronous direct transfer message (blocking)
+  [Sync]
+  FastIpcMessageSync(
+      bool internal,
+      string channel,
+      TypedArrayCloneableMessage message,
+      int32 sender_id) => (
+      TypedArrayCloneableMessage response);
+
+  // Receive a direct transfer post message with optimized typed array support
+  ReceiveFastIpcPostMessage(
+      string channel,
+      TransferableTypedArrayMessage message,
+      int32 sender_id);
+
+  // Direct transfer to host
+  FastIpcMessageHost(
+      string channel,
+      TypedArrayCloneableMessage message,
+      int32 sender_id) => ();
+};
+
+// Renderer-side interface for receiving direct transfer messages
+interface ElectronFastIpcRenderer {
+  // Message received from main process
+  ReceiveFastIpcMessage(
+      bool internal,
+      string channel,
+      TypedArrayCloneableMessage message,
+      int32 sender_id);
+};

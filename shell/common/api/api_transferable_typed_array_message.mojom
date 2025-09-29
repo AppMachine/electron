@@ -1,0 +1,44 @@
+// Copyright (c) 2024 Electron contributors.
+// Use of this source code is governed by the MIT license that can be
+// found in the LICENSE file.
+
+module electron.mojom;
+
+import "mojo/public/mojom/base/big_buffer.mojom";
+import "third_party/blink/public/mojom/blob/blob.mojom";
+import "third_party/blink/public/mojom/blob/serialized_blob.mojom";
+import "third_party/blink/public/mojom/file_system_access/file_system_access_transfer_token.mojom";
+import "third_party/blink/public/mojom/messaging/cloneable_message.mojom";
+import "third_party/blink/public/mojom/messaging/message_port_descriptor.mojom";
+import "third_party/blink/public/mojom/messaging/task_attribution_id.mojom";
+import "third_party/blink/public/mojom/messaging/user_activation_snapshot.mojom";
+
+// Combines TypedArrayCloneableMessage optimization with MessagePort transfer support
+// This replaces blink.mojom.TransferableMessage with our optimized version
+struct TransferableTypedArrayMessage {
+  // V8 serialized data with typed array metadata
+  blink.mojom.CloneableMessage base_message;
+
+  // Optimized typed array storage
+  // Uses inline storage (BigBuffer) for ≤64KB, shared memory for >64KB
+  mojo_base.mojom.BigBuffer? typed_arrays_data;
+  handle<shared_buffer>? typed_arrays_shared_memory;
+  uint64 typed_arrays_size;
+
+  // MessagePort and transfer support (from TransferableMessage)
+  array<blink.mojom.MessagePortDescriptor> ports;
+  array<blink.mojom.MessagePortDescriptor> stream_channels;
+
+  // Optional transfer data
+  blink.mojom.UserActivationSnapshot? user_activation;
+  bool delegate_payment_request = false;
+  blink.mojom.TaskAttributionId? parent_task_id;
+
+  // Additional compatibility fields
+  bool allow_autoplay = false;
+  array<blink.mojom.SerializedBlob>? blobs;
+
+  // File system access tokens for transfer
+  array<pending_remote<blink.mojom.FileSystemAccessTransferToken>>?
+      file_system_access_tokens;
+};

@@ -114,6 +114,18 @@ Sending Functions, Promises, Symbols, WeakMaps, or WeakSets will throw an except
 The renderer process can handle the message by listening to `channel` with the
 [`ipcRenderer`](ipc-renderer.md) module.
 
+#### `frame.sendFastIpc(channel, ...args)`
+
+* `channel` string
+* `...args` any[]
+
+Send a high-performance asynchronous message to the renderer process via `channel`, along with
+arguments. This method uses optimized native bindings for better performance compared to
+the standard `send` method.
+
+The renderer process can handle the message by listening to `channel` with the
+[`fastIpcRenderer`](fast-ipc-renderer.md) module.
+
 #### `frame.postMessage(channel, message, [transfer])`
 
 * `channel` string
@@ -191,6 +203,24 @@ messages. However, if the `nodeIntegrationInSubFrames` option is enabled, it is
 possible for child frames to send and receive IPC messages also. The
 [`WebContents.ipc`](web-contents.md#contentsipc-readonly) interface may be more
 convenient when `nodeIntegrationInSubFrames` is not enabled.
+
+#### `frame.fastIpc` _Readonly_
+
+A [`FastIpcMain`](fast-ipc-main.md) instance scoped to the frame.
+
+High-performance IPC messages sent with `fastIpcRenderer.send`, `fastIpcRenderer.sendSync` or
+`fastIpcRenderer.postMessage` will be delivered in the following order:
+
+1. `contents.mainFrame.fastIpc.on(channel)`
+2. `contents.fastIpc.on(channel)`
+3. `fastIpcMain.on(channel)`
+
+Handlers registered with `invoke` will be checked in the following order. The
+first one that is defined will be called, the rest will be ignored.
+
+1. `contents.mainFrame.fastIpc.handle(channel)`
+2. `contents.fastIpc.handle(channel)`
+3. `fastIpcMain.handle(channel)`
 
 #### `frame.url` _Readonly_
 

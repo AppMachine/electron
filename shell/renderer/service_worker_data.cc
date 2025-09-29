@@ -59,7 +59,7 @@ void ServiceWorkerData::Message(bool internal,
 }
 
 void ServiceWorkerData::ReceivePostMessage(const std::string& channel,
-                                           blink::TransferableMessage message) {
+                                           electron::mojom::TransferableTypedArrayMessagePtr message) {
   NOTIMPLEMENTED();
 }
 

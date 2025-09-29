@@ -131,6 +131,7 @@ declare namespace Electron {
   interface WebFrameMain {
     _send(internal: boolean, channel: string, args: any): void;
     _sendInternal(channel: string, ...args: any[]): void;
+    _sendFastIpcMessage(internal: boolean, channel: string, args: any[]): void;
     _postMessage(channel: string, message: any, transfer?: any[]): void;
     _lifecycleStateForTesting: string;
   }
@@ -212,6 +213,16 @@ declare namespace Electron {
     _replyChannel: ReplyChannel;
   }
 
+  interface FastIpcMainEvent {
+    _replyChannel: ReplyChannel;
+    frameTreeNodeId?: number;
+  }
+
+  interface FastIpcMainInvokeEvent {
+    _replyChannel: ReplyChannel;
+    frameTreeNodeId?: number;
+  }
+
   // Deprecated / undocumented BrowserWindow methods
   interface BrowserWindow {
     getURL(): string;
@@ -287,6 +298,10 @@ declare namespace ElectronInternal {
     invoke<T>(channel: string, ...args: any[]): Promise<T>;
   }
 
+  interface FastIpcRendererInternal extends NodeJS.EventEmitter, Pick<Electron.IpcRenderer, 'send' | 'sendSync' | 'invoke'> {
+    invoke<T>(channel: string, ...args: any[]): Promise<T>;
+  }
+
   type IpcMainInternalEvent = Omit<Electron.IpcMainEvent, 'reply'> | Omit<Electron.IpcMainServiceWorkerEvent, 'reply'>;
   type IpcMainInternalInvokeEvent = Electron.IpcMainInvokeEvent | Electron.IpcMainServiceWorkerInvokeEvent;
 
@@ -294,6 +309,15 @@ declare namespace ElectronInternal {
     handle(channel: string, listener: (event: IpcMainInternalInvokeEvent, ...args: any[]) => Promise<any> | any): void;
     on(channel: string, listener: (event: IpcMainInternalEvent, ...args: any[]) => void): this;
     once(channel: string, listener: (event: IpcMainInternalEvent, ...args: any[]) => void): this;
+  }
+
+  type FastIpcMainInternalEvent = Omit<Electron.FastIpcMainEvent, 'reply'> | Omit<Electron.IpcMainServiceWorkerEvent, 'reply'>;
+  type FastIpcMainInternalInvokeEvent = Electron.FastIpcMainInvokeEvent | Electron.IpcMainServiceWorkerInvokeEvent;
+
+  interface FastIpcMainInternal extends NodeJS.EventEmitter {
+    handle(channel: string, listener: (event: FastIpcMainInternalInvokeEvent, ...args: any[]) => Promise<any> | any): void;
+    on(channel: string, listener: (event: FastIpcMainInternalEvent, ...args: any[]) => void): this;
+    once(channel: string, listener: (event: FastIpcMainInternalEvent, ...args: any[]) => void): this;
   }
 
   interface LoadURLOptions extends Electron.LoadURLOptions {

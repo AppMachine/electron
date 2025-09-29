@@ -4,6 +4,7 @@
 
 #include "shell/services/node/parent_port.h"
 
+#include <iostream>
 #include <utility>
 
 #include "base/no_destructor.h"
@@ -16,6 +17,10 @@
 #include "shell/common/gin_helper/event_emitter_caller.h"
 #include "shell/common/node_includes.h"
 #include "shell/common/v8_util.h"
+#include "shell/common/transferable_typed_array_v8_serializer.h"
+#include "shell/common/api/api_transferable_typed_array_message.mojom.h"
+#include "third_party/blink/public/common/messaging/cloneable_message_mojom_traits.h"
+#include "third_party/blink/public/common/messaging/task_attribution_id_mojom_traits.h"
 #include "third_party/blink/public/common/messaging/transferable_message_mojom_traits.h"
 
 namespace electron {
@@ -45,16 +50,25 @@ void ParentPort::Initialize(blink::MessagePortDescriptor port) {
 void ParentPort::PostMessage(v8::Local<v8::Value> message_value) {
   if (!connector_closed_ && connector_ && connector_->is_valid()) {
     v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
-    blink::TransferableMessage transferable_message;
+    auto transferable_message = electron::mojom::TransferableTypedArrayMessage::New();
 
-    if (!electron::SerializeV8Value(isolate, message_value,
-                                    &transferable_message)) {
+    std::cout << "[ParentPort::PostMessage] Creating TransferableTypedArrayMessage" << std::endl;
+
+    // Initialize required array fields
+    transferable_message->ports = std::vector<blink::MessagePortDescriptor>();
+    transferable_message->stream_channels = std::vector<blink::MessagePortDescriptor>();
+
+    // Use our serializer with shared memory support (no transfer list for parent port)
+    if (!electron::SerializeV8ValueWithTransfer(
+            isolate, message_value, v8::Undefined(isolate), transferable_message.get())) {
       // SerializeV8Value sets an exception.
+      std::cout << "[ParentPort::PostMessage] Serialization failed" << std::endl;
       return;
     }
 
+    std::cout << "[ParentPort::PostMessage] Sending message" << std::endl;
     mojo::Message mojo_message =
-        blink::mojom::TransferableMessage::WrapAsMessage(
+        electron::mojom::TransferableTypedArrayMessage::WrapAsMessage(
             std::move(transferable_message));
     connector_->Accept(&mojo_message);
   }
@@ -82,18 +96,27 @@ void ParentPort::Pause() {
 }
 
 bool ParentPort::Accept(mojo::Message* mojo_message) {
-  blink::TransferableMessage message;
-  if (!blink::mojom::TransferableMessage::DeserializeFromMessage(
+  std::cout << "[ParentPort::Accept] Received message" << std::endl;
+
+  electron::mojom::TransferableTypedArrayMessagePtr message;
+  if (!electron::mojom::TransferableTypedArrayMessage::DeserializeFromMessage(
           std::move(*mojo_message), &message)) {
+    std::cout << "[ParentPort::Accept] Failed to deserialize" << std::endl;
     return false;
   }
 
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
-  auto wrapped_ports =
-      MessagePort::EntanglePorts(isolate, std::move(message.ports));
+
+  // Convert MessagePortDescriptors to MessagePortChannels
+  std::vector<blink::MessagePortChannel> channels;
+  for (auto& port : message->ports) {
+    channels.push_back(blink::MessagePortChannel(std::move(port)));
+  }
+  auto wrapped_ports = MessagePort::EntanglePorts(isolate, std::move(channels));
+
   v8::Local<v8::Value> message_value =
-      electron::DeserializeV8Value(isolate, message);
+      electron::DeserializeV8ValueWithTransfer(isolate, *message);
   v8::Local<v8::Object> self;
   if (!GetWrapper(isolate).ToLocal(&self))
     return false;

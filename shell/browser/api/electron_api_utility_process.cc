@@ -4,6 +4,7 @@
 
 #include "shell/browser/api/electron_api_utility_process.h"
 
+#include <iostream>
 #include <map>
 #include <utility>
 
@@ -31,7 +32,11 @@
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
 #include "shell/common/v8_util.h"
+#include "shell/common/transferable_typed_array_v8_serializer.h"
+#include "shell/common/api/api_transferable_typed_array_message.mojom.h"
+#include "third_party/blink/public/common/messaging/cloneable_message_mojom_traits.h"
 #include "third_party/blink/public/common/messaging/message_port_descriptor.h"
+#include "third_party/blink/public/common/messaging/task_attribution_id_mojom_traits.h"
 #include "third_party/blink/public/common/messaging/transferable_message_mojom_traits.h"
 
 #if BUILDFLAG(IS_POSIX)
@@ -332,22 +337,24 @@ void UtilityProcessWrapper::PostMessage(gin::Arguments* args) {
   if (!node_service_remote_.is_connected())
     return;
 
-  blink::TransferableMessage transferable_message;
+  auto transferable_message = electron::mojom::TransferableTypedArrayMessage::New();
   gin_helper::ErrorThrower thrower(args->isolate());
+
+  std::cout << "[UtilityProcessWrapper::PostMessage] Creating TransferableTypedArrayMessage" << std::endl;
+
+  // Initialize required array fields
+  transferable_message->ports = std::vector<blink::MessagePortDescriptor>();
+  transferable_message->stream_channels = std::vector<blink::MessagePortDescriptor>();
 
   // |message| is any value that can be serialized to StructuredClone.
   v8::Local<v8::Value> message_value;
-  if (args->GetNext(&message_value)) {
-    if (!electron::SerializeV8Value(args->isolate(), message_value,
-                                    &transferable_message)) {
-      // SerializeV8Value sets an exception.
-      return;
-    }
+  v8::Local<v8::Value> transferables = v8::Undefined(args->isolate());
+
+  if (!args->GetNext(&message_value)) {
+    message_value = v8::Undefined(args->isolate());
   }
 
-  v8::Local<v8::Value> transferables;
-  std::vector<gin::Handle<MessagePort>> wrapped_ports;
-  if (args->GetNext(&transferables)) {
+  if (args->GetNext(&transferables) && !transferables->IsUndefined()) {
     std::vector<v8::Local<v8::Value>> wrapped_port_values;
     if (!gin::ConvertFromV8(args->isolate(), transferables,
                             &wrapped_port_values)) {
@@ -364,20 +371,18 @@ void UtilityProcessWrapper::PostMessage(gin::Arguments* args) {
         return;
       }
     }
-
-    if (!gin::ConvertFromV8(args->isolate(), transferables, &wrapped_ports)) {
-      thrower.ThrowTypeError("Passed an invalid MessagePort");
-      return;
-    }
   }
 
-  bool threw_exception = false;
-  transferable_message.ports = MessagePort::DisentanglePorts(
-      args->isolate(), wrapped_ports, &threw_exception);
-  if (threw_exception)
+  // Use our serializer with shared memory support and transfer list
+  if (!electron::SerializeV8ValueWithTransfer(
+          args->isolate(), message_value, transferables, transferable_message.get())) {
+    // SerializeV8Value sets an exception.
+    std::cout << "[UtilityProcessWrapper::PostMessage] Serialization failed" << std::endl;
     return;
+  }
 
-  mojo::Message mojo_message = blink::mojom::TransferableMessage::WrapAsMessage(
+  std::cout << "[UtilityProcessWrapper::PostMessage] Sending message" << std::endl;
+  mojo::Message mojo_message = electron::mojom::TransferableTypedArrayMessage::WrapAsMessage(
       std::move(transferable_message));
   connector_->Accept(&mojo_message);
 }
@@ -407,16 +412,22 @@ v8::Local<v8::Value> UtilityProcessWrapper::GetOSProcessId(
 }
 
 bool UtilityProcessWrapper::Accept(mojo::Message* mojo_message) {
-  blink::TransferableMessage message;
-  if (!blink::mojom::TransferableMessage::DeserializeFromMessage(
+  std::cout << "[UtilityProcessWrapper::Accept] Received message" << std::endl;
+
+  electron::mojom::TransferableTypedArrayMessagePtr message;
+  if (!electron::mojom::TransferableTypedArrayMessage::DeserializeFromMessage(
           std::move(*mojo_message), &message)) {
+    std::cout << "[UtilityProcessWrapper::Accept] Failed to deserialize" << std::endl;
     return false;
   }
 
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
+
+  // Note: For utility process, we typically don't transfer ports back,
+  // but the deserializer handles it anyway
   v8::Local<v8::Value> message_value =
-      electron::DeserializeV8Value(isolate, message);
+      electron::DeserializeV8ValueWithTransfer(isolate, *message);
   EmitWithoutEvent("message", message_value);
   return true;
 }

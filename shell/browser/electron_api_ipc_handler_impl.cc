@@ -11,7 +11,9 @@
 #include "gin/handle.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "shell/browser/api/electron_api_session.h"
+#include "shell/common/api/api_transferable_typed_array_message.mojom.h"
 #include "shell/common/gin_converters/content_converter.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom.h"
 #include "shell/common/gin_converters/frame_converter.h"
 #include "shell/common/gin_helper/event.h"
 
@@ -66,14 +68,14 @@ void ElectronApiIPCHandlerImpl::Invoke(bool internal,
 
 void ElectronApiIPCHandlerImpl::ReceivePostMessage(
     const std::string& channel,
-    blink::TransferableMessage message) {
+    electron::mojom::TransferableTypedArrayMessagePtr message) {
   auto* session = GetSession();
   v8::Isolate* isolate = electron::JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
   auto event = MakeIPCEvent(isolate, session, false);
   if (event.IsEmpty())
     return;
-  session->ReceivePostMessage(event, channel, std::move(message));
+  session->ReceivePostMessage(event, channel, std::move(*message));
 }
 
 void ElectronApiIPCHandlerImpl::MessageSync(bool internal,

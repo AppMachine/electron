@@ -13,6 +13,7 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "shell/common/api/api.mojom.h"
+#include "shell/common/api/api_fast_ipc.mojom.h"
 
 namespace electron {
 
@@ -20,6 +21,8 @@ class RendererClientBase;
 
 class ElectronApiServiceImpl : public mojom::ElectronRenderer,
                                public content::RenderFrameObserver {
+  // Forward declaration
+  class FastIpcInterface;
  public:
   ElectronApiServiceImpl(content::RenderFrame* render_frame,
                          RendererClientBase* renderer_client);
@@ -30,13 +33,14 @@ class ElectronApiServiceImpl : public mojom::ElectronRenderer,
   ElectronApiServiceImpl& operator=(const ElectronApiServiceImpl&) = delete;
 
   void BindTo(mojo::PendingReceiver<mojom::ElectronRenderer> receiver);
+  void BindFastIpc(mojo::PendingReceiver<mojom::ElectronFastIpcRenderer> receiver);
 
   // mojom::ElectronRenderer
   void Message(bool internal,
                const std::string& channel,
                blink::CloneableMessage arguments) override;
   void ReceivePostMessage(const std::string& channel,
-                          blink::TransferableMessage message) override;
+                          electron::mojom::TransferableTypedArrayMessagePtr message) override;
   void TakeHeapSnapshot(mojo::ScopedHandle file,
                         TakeHeapSnapshotCallback callback) override;
   void ProcessPendingMessages();
@@ -64,6 +68,10 @@ class ElectronApiServiceImpl : public mojom::ElectronRenderer,
   mojo::Receiver<mojom::ElectronRenderer> receiver_{this};
 
   raw_ptr<RendererClientBase> renderer_client_;
+
+  // Direct Transfer interface (lazily created)
+  std::unique_ptr<FastIpcInterface> fast_ipc_interface_;
+
   base::WeakPtrFactory<ElectronApiServiceImpl> weak_factory_{this};
 };
 

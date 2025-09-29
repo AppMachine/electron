@@ -11,6 +11,7 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
+#include "base/values.h"
 #include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/global_routing_id.h"
 #include "gin/wrappable.h"
@@ -18,8 +19,10 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "shell/browser/event_emitter_mixin.h"
 #include "shell/common/api/api.mojom.h"
+#include "shell/common/api/api_fast_ipc.mojom.h"
 #include "shell/common/gin_helper/constructible.h"
 #include "shell/common/gin_helper/pinnable.h"
+#include "shell/common/gin_helper/promise.h"
 #include "third_party/blink/public/mojom/page/page_visibility_state.mojom-forward.h"
 
 class GURL;
@@ -104,6 +107,10 @@ class WebFrameMain final : public gin::Wrappable<WebFrameMain>,
   void TeardownMojoConnection();
   void OnRendererConnectionError();
 
+  // Direct Transfer API methods
+  const mojo::Remote<mojom::ElectronFastIpcRenderer>& GetFastIpcApi();
+  void MaybeSetupFastIpcConnection();
+
   [[nodiscard]] bool HasRenderFrame() const;
 
   // Throws a JS error if HasRenderFrame() is false.
@@ -120,6 +127,10 @@ class WebFrameMain final : public gin::Wrappable<WebFrameMain>,
             bool internal,
             const std::string& channel,
             v8::Local<v8::Value> args);
+  void SendFastIpc(v8::Isolate* isolate,
+                          bool internal,
+                          const std::string& channel,
+                          v8::Local<v8::Value> args);
   void PostMessage(v8::Isolate* isolate,
                    const std::string& channel,
                    v8::Local<v8::Value> message_value,
@@ -152,6 +163,10 @@ class WebFrameMain final : public gin::Wrappable<WebFrameMain>,
 
   mojo::Remote<mojom::ElectronRenderer> renderer_api_;
   mojo::PendingReceiver<mojom::ElectronRenderer> pending_receiver_;
+
+  // Direct Transfer API for high-performance IPC
+  mojo::Remote<mojom::ElectronFastIpcRenderer> renderer_fast_ipc_api_;
+  mojo::PendingReceiver<mojom::ElectronFastIpcRenderer> pending_fast_ipc_receiver_;
 
   content::FrameTreeNodeId frame_tree_node_id_;
   content::GlobalRenderFrameHostToken frame_token_;
